@@ -29,6 +29,7 @@ func main() {
 		log.Fatalf("[FATAL] Failed to connect to database: %v", err)
 	}
 
+
 	// 3. Init Repositories
 	userRepo := repository.NewUserRepository(db)
 	walletRepo := repository.NewWalletRepository(db)
@@ -127,6 +128,7 @@ func main() {
 	protected.Get("/savings-goals/:id", goalHandler.GetByID)
 	protected.Put("/savings-goals/:id", goalHandler.Update)
 	protected.Post("/savings-goals/:id/deposit", goalHandler.Deposit)
+	protected.Post("/savings-goals/:id/complete", goalHandler.Complete)
 	protected.Delete("/savings-goals/:id", goalHandler.Delete)
 
 	// Analytics & Dashboard

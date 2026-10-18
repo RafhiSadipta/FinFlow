@@ -1,6 +1,8 @@
 package service
 
 import (
+	"strings"
+
 	"finflow-backend/internal/models"
 	"finflow-backend/internal/repository"
 
@@ -13,6 +15,7 @@ type SavingsGoalService interface {
 	GetGoalByID(id uuid.UUID, userID uuid.UUID) (*models.SavingsGoal, error)
 	UpdateGoal(id uuid.UUID, userID uuid.UUID, req *models.UpdateSavingsGoalRequest) (*models.SavingsGoal, error)
 	DepositGoal(userID uuid.UUID, goalID uuid.UUID, req *models.DepositSavingsGoalRequest) (*models.SavingsGoal, error)
+	CompleteGoal(userID uuid.UUID, goalID uuid.UUID, req *models.CompleteSavingsGoalRequest) (*models.SavingsGoal, error)
 	DeleteGoal(id uuid.UUID, userID uuid.UUID) error
 }
 
@@ -34,12 +37,20 @@ func (s *savingsGoalService) CreateGoal(userID uuid.UUID, req *models.CreateSavi
 		color = "#4EDE93"
 	}
 
+	targetDate := strings.TrimSpace(req.TargetDate)
+	if idx := strings.Index(targetDate, "T"); idx != -1 {
+		targetDate = targetDate[:idx]
+	}
+	if idx := strings.Index(targetDate, " "); idx != -1 {
+		targetDate = targetDate[:idx]
+	}
+
 	goal := &models.SavingsGoal{
 		UserID:          userID,
 		Name:            req.Name,
 		TargetAmount:    req.TargetAmount,
 		CurrentAmount:   req.CurrentAmount,
-		TargetDate:      req.TargetDate,
+		TargetDate:      targetDate,
 		AutoDebitAmount: req.AutoDebitAmount,
 		Icon:            icon,
 		Color:           color,
@@ -76,7 +87,14 @@ func (s *savingsGoalService) UpdateGoal(id uuid.UUID, userID uuid.UUID, req *mod
 		goal.CurrentAmount = *req.CurrentAmount
 	}
 	if req.TargetDate != nil {
-		goal.TargetDate = *req.TargetDate
+		td := strings.TrimSpace(*req.TargetDate)
+		if idx := strings.Index(td, "T"); idx != -1 {
+			td = td[:idx]
+		}
+		if idx := strings.Index(td, " "); idx != -1 {
+			td = td[:idx]
+		}
+		goal.TargetDate = td
 	}
 	if req.AutoDebitAmount != nil {
 		goal.AutoDebitAmount = *req.AutoDebitAmount
@@ -101,7 +119,11 @@ func (s *savingsGoalService) UpdateGoal(id uuid.UUID, userID uuid.UUID, req *mod
 }
 
 func (s *savingsGoalService) DepositGoal(userID uuid.UUID, goalID uuid.UUID, req *models.DepositSavingsGoalRequest) (*models.SavingsGoal, error) {
-	return s.goalRepo.Deposit(userID, goalID, req.WalletID, req.Amount)
+	return s.goalRepo.Deposit(userID, goalID, req.Amount)
+}
+
+func (s *savingsGoalService) CompleteGoal(userID uuid.UUID, goalID uuid.UUID, req *models.CompleteSavingsGoalRequest) (*models.SavingsGoal, error) {
+	return s.goalRepo.CompleteGoal(userID, goalID, req.WalletID, req.CategoryID, req.ActualAmount, req.Notes)
 }
 
 func (s *savingsGoalService) DeleteGoal(id uuid.UUID, userID uuid.UUID) error {

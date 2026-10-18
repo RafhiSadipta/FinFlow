@@ -104,7 +104,11 @@ interface FinFlowState {
   restoreCategory: (id: string) => Promise<boolean>;
   fetchDeletedCategories: () => Promise<void>;
   addSavingsGoal: (goal: Omit<SavingsGoal, 'id' | 'currentAmount' | 'isCompleted'>) => Promise<void>;
+  updateSavingsGoal: (id: string, goal: Partial<SavingsGoal>) => Promise<boolean>;
+  deleteSavingsGoal: (id: string) => Promise<boolean>;
   addDepositToGoal: (id: string, amount: number, walletId?: string) => Promise<void>;
+  completeSavingsGoal: (id: string, actualAmount: number, walletId: string, categoryId?: string, notes?: string) => Promise<boolean>;
+  updateSavingsGoalProgress: (id: string, addedAmount: number) => Promise<void>;
   setBudgetLimit: (categoryId: string, limitAmount: number) => Promise<void>;
   setMonthlyOverallBudget: (limit: number) => Promise<void>;
   setSalaryAllocation: (rule: Partial<SalaryAllocationRule>) => Promise<void>;
@@ -667,10 +671,8 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
   addSavingsGoal: async (goalData) => {
     try {
-      let targetDateFormatted = goalData.targetDate;
+      let targetDateFormatted = goalData.targetDate || '';
       if (targetDateFormatted && !targetDateFormatted.includes('-')) {
-        targetDateFormatted = new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0];
-      } else if (!targetDateFormatted) {
         targetDateFormatted = new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0];
       }
 
@@ -721,8 +723,40 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
       if (res.data?.data) {
         const updatedGoal = mapSavingsGoalFromBackend(res.data.data);
-        
-        // Refresh wallets and transactions
+
+        set((state) => ({
+          savingsGoals: state.savingsGoals.map((g) => (g.id === id ? updatedGoal : g)),
+        }));
+
+        get().showToast({
+          type: 'success',
+          title: 'Tabungan Ditambahkan!',
+          message: `Berhasil mencatat setoran Rp ${formatRupiah(amount, false)} ke "${updatedGoal.name}". Uang tetap tersimpan di akun Anda.`,
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to deposit to goal:', err);
+      get().showToast({
+        type: 'error',
+        title: 'Gagal Menyetor Tabungan',
+        message: err.response?.data?.message || 'Server error saat mencatat setoran.',
+      });
+    }
+  },
+
+  completeSavingsGoal: async (id, actualAmount, walletId, categoryId, notes) => {
+    try {
+      const res = await savingsGoalApi.complete(id, {
+        actual_amount: actualAmount,
+        wallet_id: walletId,
+        category_id: categoryId,
+        notes: notes,
+      });
+
+      if (res.data?.data) {
+        const updatedGoal = mapSavingsGoalFromBackend(res.data.data);
+
+        // Refresh wallets and transactions since money was actually spent!
         const [walletsRes, txRes] = await Promise.allSettled([
           walletApi.getAll(),
           transactionApi.getAll(),
@@ -746,17 +780,104 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
         get().showToast({
           type: 'success',
-          title: 'Tabungan Berhasil Ditambah!',
-          message: `Saldo target ${updatedGoal.name} bertambah.`,
+          title: 'Target Impian Tercapai & Dibeli! 🎉',
+          message: `Selamat! "${updatedGoal.name}" tuntas dibeli (${formatRupiah(actualAmount)}). Pengeluaran telah dibukukan.`,
         });
+        return true;
       }
+      return false;
     } catch (err: any) {
-      console.error('Failed to deposit to goal:', err);
+      console.error('Failed to complete savings goal:', err);
       get().showToast({
         type: 'error',
-        title: 'Gagal Menyetor Tabungan',
-        message: err.response?.data?.message || 'Saldo dompet tidak mencukupi atau server error.',
+        title: 'Gagal Menyelesaikan Target',
+        message: err.response?.data?.message || 'Saldo dompet tidak mencukupi atau terjadi kesalahan.',
       });
+      return false;
+    }
+  },
+
+  updateSavingsGoalProgress: async (id: string, addedAmount: number) => {
+    const goal = get().savingsGoals.find((g) => g.id === id);
+    if (!goal) return;
+    const newAmount = goal.currentAmount + addedAmount;
+    try {
+      const res = await savingsGoalApi.update(id, {
+        current_amount: newAmount,
+        is_completed: newAmount >= goal.targetAmount,
+      });
+      if (res.data?.data) {
+        const updatedGoal = mapSavingsGoalFromBackend(res.data.data);
+        set((state) => ({
+          savingsGoals: state.savingsGoals.map((g) => (g.id === id ? updatedGoal : g)),
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to update savings goal progress:', err);
+    }
+  },
+
+  updateSavingsGoal: async (id: string, goalData: Partial<SavingsGoal>) => {
+    try {
+      const payload: any = {};
+      if (goalData.name !== undefined) payload.name = goalData.name;
+      if (goalData.targetAmount !== undefined) payload.target_amount = goalData.targetAmount;
+      if (goalData.currentAmount !== undefined) payload.current_amount = goalData.currentAmount;
+      if (goalData.targetDate !== undefined) {
+        let td = goalData.targetDate || '';
+        if (td.includes('T')) td = td.split('T')[0];
+        payload.target_date = td;
+      }
+      if (goalData.icon !== undefined) payload.icon = goalData.icon;
+      if (goalData.color !== undefined) payload.color = goalData.color;
+      if (goalData.isCompleted !== undefined) payload.is_completed = goalData.isCompleted;
+
+      const res = await savingsGoalApi.update(id, payload);
+      if (res.data?.data) {
+        const updatedGoal = mapSavingsGoalFromBackend(res.data.data);
+        set((state) => ({
+          savingsGoals: state.savingsGoals.map((g) => (g.id === id ? updatedGoal : g)),
+        }));
+        get().showToast({
+          type: 'success',
+          title: 'Target Tabungan Diperbarui',
+          message: `Target "${updatedGoal.name}" berhasil diubah.`,
+        });
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      console.error('Failed to update savings goal:', err);
+      get().showToast({
+        type: 'error',
+        title: 'Gagal Memperbarui Target',
+        message: err.response?.data?.message || 'Server gagal memperbarui target tabungan.',
+      });
+      return false;
+    }
+  },
+
+  deleteSavingsGoal: async (id: string) => {
+    try {
+      const targetGoal = get().savingsGoals.find((g) => g.id === id);
+      await savingsGoalApi.delete(id);
+      set((state) => ({
+        savingsGoals: state.savingsGoals.filter((g) => g.id !== id),
+      }));
+      get().showToast({
+        type: 'success',
+        title: 'Target Tabungan Dihapus',
+        message: targetGoal ? `Target "${targetGoal.name}" berhasil dihapus.` : 'Target berhasil dihapus.',
+      });
+      return true;
+    } catch (err: any) {
+      console.error('Failed to delete savings goal:', err);
+      get().showToast({
+        type: 'error',
+        title: 'Gagal Menghapus Target',
+        message: err.response?.data?.message || 'Server gagal menghapus target tabungan.',
+      });
+      return false;
     }
   },
 

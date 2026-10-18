@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { useFinFlowStore } from '../store/useFinFlowStore';
 import { NumericKeypad } from '../components/NumericKeypad';
+import { CustomDropdown } from '../components/CustomDropdown';
 import { formatRupiah, numberToWordsID } from '../utils/formatters';
 import type { TransactionType } from '../types';
 
@@ -12,7 +13,9 @@ export const RecordTransactionModal: React.FC = () => {
     setRecordModalOpen,
     wallets,
     categories,
+    savingsGoals,
     addTransaction,
+    updateSavingsGoalProgress,
     setCategoryModalOpen,
     showToast,
     user,
@@ -23,6 +26,7 @@ export const RecordTransactionModal: React.FC = () => {
   const [selectedWalletId, setSelectedWalletId] = useState<string>(wallets[0]?.id || '');
   const [selectedDestWalletId, setSelectedDestWalletId] = useState<string>(wallets[1]?.id || '');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(categories[0]?.id || '');
+  const [selectedGoalId, setSelectedGoalId] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -30,6 +34,7 @@ export const RecordTransactionModal: React.FC = () => {
   useEffect(() => {
     if (isRecordModalOpen) {
       setType(recordModalInitialType || 'expense');
+      setSelectedGoalId('');
       if (wallets.length > 0 && (!selectedWalletId || !wallets.some((w) => w.id === selectedWalletId))) {
         setSelectedWalletId(wallets[0].id);
       }
@@ -38,6 +43,21 @@ export const RecordTransactionModal: React.FC = () => {
       }
     }
   }, [isRecordModalOpen, recordModalInitialType, wallets]);
+
+  // Auto-select savings category when goal is selected
+  useEffect(() => {
+    if (selectedGoalId) {
+      const savingsCat = categories.find(
+        (c) =>
+          c.allocationGroup === 'savings' ||
+          c.name.toLowerCase().includes('tabungan') ||
+          c.name.toLowerCase().includes('investasi')
+      );
+      if (savingsCat) {
+        setSelectedCategoryId(savingsCat.id);
+      }
+    }
+  }, [selectedGoalId, categories]);
 
   // Keep category valid when type or categories change
   useEffect(() => {
@@ -97,20 +117,36 @@ export const RecordTransactionModal: React.FC = () => {
 
     const sourceWallet = wallets.find((w) => w.id === selectedWalletId);
     const destWallet = wallets.find((w) => w.id === selectedDestWalletId);
+    const targetGoal = selectedGoalId ? savingsGoals.find((g) => g.id === selectedGoalId) : null;
     const selectedCategory = categories.find((c) => c.id === selectedCategoryId);
 
     setIsSubmitting(true);
     try {
+      const isTransfer = type === 'transfer';
+      const effectiveCategory = isTransfer && selectedGoalId
+        ? (categories.find(c => c.allocationGroup === 'savings' || c.name.toLowerCase().includes('tabungan') || c.name.toLowerCase().includes('investasi'))?.id || selectedCategoryId)
+        : selectedCategoryId;
+
+      const txNotes = notes.trim()
+        ? notes.trim()
+        : isTransfer && targetGoal
+        ? `Transfer Tabungan: ${targetGoal.name}`
+        : undefined;
+
       await addTransaction({
         userId: user?.id || '',
         walletId: selectedWalletId,
-        destinationWalletId: type === 'transfer' ? selectedDestWalletId : undefined,
-        categoryId: type !== 'transfer' ? selectedCategoryId : undefined,
+        destinationWalletId: isTransfer ? selectedDestWalletId : undefined,
+        categoryId: effectiveCategory,
         type,
         amount: currentAmount,
         transactionDate: new Date().toISOString(),
-        notes: notes.trim() || undefined,
+        notes: txNotes,
       });
+
+      if (selectedGoalId) {
+        await updateSavingsGoalProgress(selectedGoalId, currentAmount);
+      }
 
       let successTitle = 'Pengeluaran Berhasil Dicatat!';
       let successMessage = `${formatRupiah(currentAmount)} • ${selectedCategory?.name || 'Umum'} (${sourceWallet?.name || 'Dompet'})`;
@@ -129,8 +165,23 @@ export const RecordTransactionModal: React.FC = () => {
           // Ignore confetti error
         }
       } else if (type === 'transfer') {
-        successTitle = 'Transfer Dompet Berhasil!';
-        successMessage = `${formatRupiah(currentAmount)} dari ${sourceWallet?.name || 'Sumber'} ke ${destWallet?.name || 'Tujuan'}`;
+        if (targetGoal) {
+          successTitle = 'Transfer & Setoran Target Berhasil!';
+          successMessage = `${formatRupiah(currentAmount)} dipindah ke ${destWallet?.name || 'Tujuan'} & disetor ke "${targetGoal.name}"!`;
+          try {
+            confetti({
+              particleCount: 65,
+              spread: 70,
+              origin: { y: 0.65 },
+              colors: ['#4EDE93', '#4CD7F6', '#FFD700'],
+            });
+          } catch {
+            // Ignore confetti error
+          }
+        } else {
+          successTitle = 'Transfer Dompet Berhasil!';
+          successMessage = `${formatRupiah(currentAmount)} dari ${sourceWallet?.name || 'Sumber'} ke ${destWallet?.name || 'Tujuan'}`;
+        }
       }
 
       showToast({
@@ -151,6 +202,48 @@ export const RecordTransactionModal: React.FC = () => {
   const filteredCategories = categories.filter(
     (c) => type === 'transfer' || c.type === type
   );
+
+  const walletOptions = wallets.map((w) => ({
+    value: w.id,
+    label: w.name,
+    sublabel: formatRupiah(w.balance),
+    icon: w.icon || 'account_balance_wallet',
+    iconColor: w.color || '#4EDE93',
+  }));
+
+  const sourceWalletOptions = wallets.map((w) => ({
+    value: w.id,
+    label: w.name,
+    sublabel: formatRupiah(w.balance),
+    icon: w.icon || 'account_balance_wallet',
+    iconColor: w.color || '#4EDE93',
+  }));
+
+  const destWalletOptions = wallets
+    .filter((w) => w.id !== selectedWalletId)
+    .map((w) => ({
+      value: w.id,
+      label: w.name,
+      sublabel: formatRupiah(w.balance),
+      icon: w.icon || 'account_balance_wallet',
+      iconColor: w.color || '#4CD7F6',
+    }));
+
+  const goalOptions = [
+    { value: '', label: '-- Tanpa Target (Transfer Biasa) --', icon: 'remove' },
+    ...savingsGoals.map((g) => {
+      const pct = Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100));
+      return {
+        value: g.id,
+        label: g.name,
+        sublabel: `Terkumpul ${formatRupiah(g.currentAmount)} / ${formatRupiah(g.targetAmount)}`,
+        badge: `${pct}%`,
+        badgeColor: g.color || '#4EDE93',
+        icon: g.icon || 'flag',
+        iconColor: g.color || '#4EDE93',
+      };
+    }),
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
@@ -283,106 +376,96 @@ export const RecordTransactionModal: React.FC = () => {
         {/* 3. Dompet & Rekening Selector */}
         {type !== 'transfer' ? (
           <div className="shrink-0 flex items-center gap-2">
-            <div className="flex-1 flex flex-col gap-0.5">
-              <label className="text-[10px] text-on-surface-variant font-medium">
-                {type === 'income' ? 'Masuk ke Rekening/Dompet:' : 'Sumber Dana Rekening/Dompet:'}
-              </label>
-              <select
-                value={selectedWalletId}
-                onChange={(e) => setSelectedWalletId(e.target.value)}
-                className="w-full bg-surface-container px-3 py-2 rounded-xl text-xs text-on-surface border border-white/10 focus:outline-none focus:border-primary font-medium"
-              >
-                {wallets.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name} ({formatRupiah(w.balance)})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <CustomDropdown
+              label={type === 'income' ? 'Masuk ke Rekening/Dompet:' : 'Sumber Dana Rekening/Dompet:'}
+              options={walletOptions}
+              value={selectedWalletId}
+              onChange={setSelectedWalletId}
+              variant="primary"
+            />
           </div>
         ) : (
-          <div className="shrink-0 flex flex-col gap-1.5">
+          <div className="shrink-0 flex flex-col gap-2">
             <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-on-surface-variant font-medium">Dari Dompet (Sumber):</label>
-                <select
-                  value={selectedWalletId}
-                  onChange={(e) => setSelectedWalletId(e.target.value)}
-                  className="w-full bg-surface-container px-3 py-2 rounded-xl text-xs text-on-surface border border-white/10 focus:outline-none focus:border-secondary font-medium"
-                >
-                  {wallets.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <CustomDropdown
+                label="Dari Dompet (Sumber):"
+                options={sourceWalletOptions}
+                value={selectedWalletId}
+                onChange={setSelectedWalletId}
+                variant="secondary"
+              />
 
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-on-surface-variant font-medium">Ke Dompet (Tujuan):</label>
-                <select
-                  value={selectedDestWalletId}
-                  onChange={(e) => setSelectedDestWalletId(e.target.value)}
-                  className="w-full bg-surface-container px-3 py-2 rounded-xl text-xs text-on-surface border border-white/10 focus:outline-none focus:border-secondary font-medium"
-                >
-                  {wallets
-                    .filter((w) => w.id !== selectedWalletId)
-                    .map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
+              <CustomDropdown
+                label="Ke Dompet (Tujuan):"
+                options={destWalletOptions}
+                value={selectedDestWalletId}
+                onChange={setSelectedDestWalletId}
+                variant="secondary"
+              />
             </div>
 
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-secondary/10 border border-secondary/20 text-secondary text-[11px]">
               <span className="material-symbols-outlined text-[16px]">info</span>
               <span>Pindah saldo antar rekening (Net Worth tetap aman).</span>
             </div>
+
+            {/* Tautkan ke Target Tabungan / Goal (Opsional) */}
+            {savingsGoals.length > 0 && (
+              <div className="flex flex-col gap-1 pt-0.5">
+                <CustomDropdown
+                  label="🎯 Tautkan ke Target Tabungan (Opsional):"
+                  options={goalOptions}
+                  value={selectedGoalId}
+                  onChange={setSelectedGoalId}
+                  variant="primary"
+                />
+              </div>
+            )}
           </div>
         )}
 
         {/* 4. Category Selector (Horizontal Scrollable Chips Compact agar Hero Nominal selalu kelihatan) */}
-        {type !== 'transfer' && (
-          <div className="shrink-0 flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <span className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider font-bold">
-                Kategori {type === 'expense' ? 'Pengeluaran' : 'Pemasukan'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setCategoryModalOpen(true)}
-                className="text-[11px] text-secondary font-medium hover:underline flex items-center gap-0.5"
-              >
-                <span>+ Buat Kategori</span>
-                <span className="material-symbols-outlined text-[13px]">tune</span>
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-              {filteredCategories.map((cat) => {
-                const isSelected = selectedCategoryId === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setSelectedCategoryId(cat.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-all ${
-                      isSelected
-                        ? 'bg-surface-container-high border border-primary text-primary shadow-[0_0_8px_rgba(78,222,163,0.35)] scale-102'
-                        : 'bg-surface-container text-on-surface-variant border border-white/5 hover:bg-surface-container-high'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-[16px]" style={{ color: cat.color }}>
-                      {cat.icon}
-                    </span>
-                    <span>{cat.name}</span>
-                  </button>
-                );
-              })}
-            </div>
+        <div className="shrink-0 flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <span className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider font-bold">
+              {type === 'expense'
+                ? 'Kategori Pengeluaran'
+                : type === 'income'
+                ? 'Kategori Pemasukan'
+                : 'Kategori / Pos Transfer'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCategoryModalOpen(true)}
+              className="text-[11px] text-secondary font-medium hover:underline flex items-center gap-0.5"
+            >
+              <span>+ Buat Kategori</span>
+              <span className="material-symbols-outlined text-[13px]">tune</span>
+            </button>
           </div>
-        )}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+            {filteredCategories.map((cat) => {
+              const isSelected = selectedCategoryId === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setSelectedCategoryId(cat.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-all ${
+                    isSelected
+                      ? 'bg-surface-container-high border border-primary text-primary shadow-[0_0_8px_rgba(78,222,163,0.35)] scale-102'
+                      : 'bg-surface-container text-on-surface-variant border border-white/5 hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]" style={{ color: cat.color }}>
+                    {cat.icon}
+                  </span>
+                  <span>{cat.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* 5. Catatan / Notes */}
         <div className="shrink-0 flex flex-col gap-1">

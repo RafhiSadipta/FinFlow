@@ -2,6 +2,33 @@ import React, { useState } from 'react';
 import { useFinFlowStore } from '../store/useFinFlowStore';
 import { formatRupiah } from '../utils/formatters';
 import confetti from 'canvas-confetti';
+import { CustomDropdown } from '../components/CustomDropdown';
+import { CustomDatePicker } from '../components/CustomDatePicker';
+
+const formatDeadlineText = (targetDate?: string) => {
+  if (!targetDate || !targetDate.trim()) return 'Fleksibel';
+
+  // Clean time and ISO 'T' timestamp if present (e.g., '2026-12-31T00:00:00Z' -> '2026-12-31')
+  const cleanDateStr = targetDate.split('T')[0].split(' ')[0].trim();
+
+  if (cleanDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const parts = cleanDateStr.split('-');
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const d = parseInt(parts[2], 10);
+    const m = MONTHS[parseInt(parts[1], 10) - 1];
+    const y = parts[0];
+    return `${d} ${m} ${y}`;
+  }
+
+  // Fallback if parsing through standard JS Date
+  const d = new Date(targetDate);
+  if (!isNaN(d.getTime())) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  }
+
+  return cleanDateStr || 'Fleksibel';
+};
 
 export const BudgetsPage: React.FC = () => {
   const {
@@ -11,7 +38,10 @@ export const BudgetsPage: React.FC = () => {
     categories,
     transactions,
     addSavingsGoal,
+    updateSavingsGoal,
+    deleteSavingsGoal,
     addDepositToGoal,
+    completeSavingsGoal,
     salaryAllocation,
     setSalaryAllocation,
     setMonthlyOverallBudget,
@@ -30,6 +60,24 @@ export const BudgetsPage: React.FC = () => {
   const [targetAmount, setTargetAmount] = useState('');
   const [targetDate, setTargetDate] = useState('');
 
+  // Form states for editing goal
+  const [isEditGoalModalOpen, setIsEditGoalModalOpen] = useState(false);
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+  const [editGoalName, setEditGoalName] = useState('');
+  const [editTargetAmount, setEditTargetAmount] = useState('');
+  const [editTargetDate, setEditTargetDate] = useState('');
+
+  // Delete goal confirmation state
+  const [goalToDelete, setGoalToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Complete & Buy Goal state
+  const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
+  const [goalToComplete, setGoalToComplete] = useState<any | null>(null);
+  const [actualPurchaseAmount, setActualPurchaseAmount] = useState('');
+  const [selectedWalletForComplete, setSelectedWalletForComplete] = useState<string>(wallets[0]?.id || '');
+  const [selectedCategoryForComplete, setSelectedCategoryForComplete] = useState<string>('');
+  const [purchaseNotes, setPurchaseNotes] = useState('');
+
   // Calculator form states
   const [calcIncome, setCalcIncome] = useState(salaryAllocation.monthlyIncome.toString());
   const [calcNeedsPct, setCalcNeedsPct] = useState(salaryAllocation.needsPercent.toString());
@@ -47,9 +95,10 @@ export const BudgetsPage: React.FC = () => {
     .filter((g) => g.targetDate && g.currentAmount < g.targetAmount)
     .map((g) => {
       const targetTime = new Date(g.targetDate!).getTime();
-      const diffMonths = Math.max(1, Math.round((targetTime - nowMs) / (30 * 86400000)));
+      const diffMonths = isNaN(targetTime) ? 999 : Math.max(1, Math.round((targetTime - nowMs) / (30 * 86400000)));
       return { ...g, diffMonths };
     })
+    .filter((g) => g.diffMonths < 900)
     .sort((a, b) => a.diffMonths - b.diffMonths);
 
   const closestGoal = upcomingGoalsWithDeadline[0];
@@ -60,10 +109,19 @@ export const BudgetsPage: React.FC = () => {
   const wantsCap = (income * salaryAllocation.wantsPercent) / 100;
   const savingsCap = (income * salaryAllocation.savingsPercent) / 100;
 
-  // Real spent per allocation pocket from transactions
+  // Real spent per allocation pocket from transactions in current month
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const isCurrentMonthTx = (t: any) => {
+    const d = new Date(t.transactionDate);
+    return !isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+  };
+
   const needsSpent = transactions
     .filter((t) => {
-      if (t.type !== 'expense') return false;
+      if (!isCurrentMonthTx(t) || t.type !== 'expense') return false;
       const cat = categories.find((c) => c.id === t.categoryId);
       return cat?.allocationGroup === 'needs';
     })
@@ -71,7 +129,7 @@ export const BudgetsPage: React.FC = () => {
 
   const wantsSpent = transactions
     .filter((t) => {
-      if (t.type !== 'expense') return false;
+      if (!isCurrentMonthTx(t) || t.type !== 'expense') return false;
       const cat = categories.find((c) => c.id === t.categoryId);
       return cat?.allocationGroup === 'wants';
     })
@@ -79,21 +137,32 @@ export const BudgetsPage: React.FC = () => {
 
   const savingsSpent = transactions
     .filter((t) => {
-      if (t.type !== 'expense') return false;
+      if (!isCurrentMonthTx(t)) return false;
       const cat = categories.find((c) => c.id === t.categoryId);
-      return cat?.allocationGroup === 'savings';
+      const isSavingsGroup =
+        cat?.allocationGroup === 'savings' ||
+        cat?.name?.toLowerCase().includes('tabungan') ||
+        (cat?.type === 'expense' && cat?.name?.toLowerCase().includes('investasi'));
+
+      if (t.type === 'expense' && isSavingsGroup) return true;
+      if (t.type === 'transfer' && isSavingsGroup) return true;
+      return false;
     })
     .reduce((sum, t) => sum + t.amount, 0);
+
+  // Dana komitmen pada target impian yang sedang aktif
+  const activeGoalSavings = savingsGoals
+    .filter((g) => !g.isCompleted)
+    .reduce((sum, g) => sum + g.currentAmount, 0);
+
+  // Total alokasi tabungan & investasi (investasi riil + tabungan target aktif)
+  const totalSavingsAllocation = savingsSpent + activeGoalSavings;
 
   const handleCreateGoal = (e: React.FormEvent) => {
     e.preventDefault();
     if (!goalName.trim() || !targetAmount) return;
 
-    let formattedDate = targetDate.trim();
-    if (!formattedDate || !formattedDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      const targetYear = new Date().getFullYear();
-      formattedDate = `${targetYear}-12-31`;
-    }
+    const formattedDate = targetDate.trim();
 
     addSavingsGoal({
       userId: user?.id || '',
@@ -108,6 +177,78 @@ export const BudgetsPage: React.FC = () => {
     setTargetAmount('');
     setTargetDate('');
     setIsGoalModalOpen(false);
+  };
+
+  const handleOpenEditModal = (goal: any) => {
+    setEditingGoalId(goal.id);
+    setEditGoalName(goal.name);
+    setEditTargetAmount(goal.targetAmount.toString());
+    setEditTargetDate(goal.targetDate || '');
+    setIsEditGoalModalOpen(true);
+  };
+
+  const handleUpdateGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGoalId || !editGoalName.trim() || !editTargetAmount) return;
+
+    await updateSavingsGoal(editingGoalId, {
+      name: editGoalName.trim(),
+      targetAmount: parseFloat(editTargetAmount),
+      targetDate: editTargetDate.trim(),
+    });
+
+    setIsEditGoalModalOpen(false);
+    setEditingGoalId(null);
+  };
+
+  const handleConfirmDeleteGoal = async () => {
+    if (!goalToDelete) return;
+    await deleteSavingsGoal(goalToDelete.id);
+    setGoalToDelete(null);
+  };
+
+  const handleOpenCompleteModal = (goal: any) => {
+    setGoalToComplete(goal);
+    // Prefill purchase price: use targetAmount if > 0, otherwise currentAmount
+    const defaultAmount = goal.targetAmount > 0 ? goal.targetAmount : goal.currentAmount;
+    setActualPurchaseAmount(defaultAmount.toString());
+    setSelectedWalletForComplete(wallets[0]?.id || '');
+
+    // Default category: find a 'wants' or 'belanja' expense category
+    const defaultCat = categories.find((c) => c.type === 'expense' && (c.allocationGroup === 'wants' || c.name.toLowerCase().includes('belanja')));
+    setSelectedCategoryForComplete(defaultCat ? defaultCat.id : categories[0]?.id || '');
+    setPurchaseNotes(`Pembelian Target Impian: ${goal.name}`);
+    setIsCompleteModalOpen(true);
+  };
+
+  const handleCompleteGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!goalToComplete || !actualPurchaseAmount || !selectedWalletForComplete) return;
+
+    const amt = parseFloat(actualPurchaseAmount);
+    if (isNaN(amt) || amt <= 0) return;
+
+    const success = await completeSavingsGoal(
+      goalToComplete.id,
+      amt,
+      selectedWalletForComplete,
+      selectedCategoryForComplete || undefined,
+      purchaseNotes.trim()
+    );
+
+    if (success) {
+      try {
+        confetti({
+          particleCount: 140,
+          spread: 100,
+          origin: { y: 0.6 },
+        });
+      } catch {
+        // Ignore
+      }
+      setIsCompleteModalOpen(false);
+      setGoalToComplete(null);
+    }
   };
 
   const handleDeposit = (e: React.FormEvent) => {
@@ -294,26 +435,63 @@ export const BudgetsPage: React.FC = () => {
                     <h3 className="font-headline-sm text-sm text-on-surface font-bold">{goal.name}</h3>
                     <div className="flex items-center gap-1 text-on-surface-variant text-[11px] mt-0.5">
                       <span className="material-symbols-outlined text-xs">event</span>
-                      <span>Deadline: {goal.targetDate || 'Fleksibel'}</span>
+                      <span>Deadline: {formatDeadlineText(goal.targetDate)}</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span
-                    className="px-2.5 py-0.5 rounded-full font-label-caps text-[11px] font-bold tabular-nums"
-                    style={{ backgroundColor: `${goal.color}20`, color: goal.color }}
-                  >
-                    {pct}%
-                  </span>
+                  {goal.isCompleted ? (
+                    <span className="px-2.5 py-1 rounded-xl font-label-caps text-[10px] font-bold bg-primary/20 text-primary border border-primary/30 flex items-center gap-1 shadow-[0_0_8px_rgba(78,222,163,0.2)]">
+                      <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                      <span>Tuntas & Dibeli 🎉</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        className="px-2.5 py-0.5 rounded-full font-label-caps text-[11px] font-bold tabular-nums"
+                        style={{ backgroundColor: `${goal.color}20`, color: goal.color }}
+                      >
+                        {pct}%
+                      </span>
+                      {pct < 100 && (
+                        <button
+                          onClick={() => {
+                            setActiveGoalId(goal.id);
+                            setIsDepositModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-secondary transition-all active:scale-90"
+                          title="Nabung"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">add</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleOpenCompleteModal(goal)}
+                        className={`px-2.5 py-1 rounded-xl font-label-caps text-[10px] font-bold flex items-center gap-1 transition-all active:scale-95 shadow-[0_0_8px_rgba(78,222,163,0.25)] ${
+                          pct >= 100
+                            ? 'bg-primary text-surface-container-lowest font-extrabold shadow-[0_0_12px_rgba(78,222,163,0.5)] ring-1 ring-primary'
+                            : 'bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30'
+                        }`}
+                        title="Beli & Tuntaskan Target"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">shopping_cart_checkout</span>
+                        <span>{pct >= 100 ? 'Beli Sekarang!' : 'Beli'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleOpenEditModal(goal)}
+                        className="p-1.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant hover:text-on-surface transition-all active:scale-90"
+                        title="Edit Target"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">edit</span>
+                      </button>
+                    </>
+                  )}
                   <button
-                    onClick={() => {
-                      setActiveGoalId(goal.id);
-                      setIsDepositModalOpen(true);
-                    }}
-                    className="p-1.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-secondary transition-all active:scale-90"
-                    title="Nabung"
+                    onClick={() => setGoalToDelete({ id: goal.id, name: goal.name })}
+                    className="p-1.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant hover:text-error transition-all active:scale-90"
+                    title="Hapus Target"
                   >
-                    <span className="material-symbols-outlined text-[18px]">add</span>
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
                   </button>
                 </div>
               </div>
@@ -458,13 +636,15 @@ export const BudgetsPage: React.FC = () => {
                   Tabungan & Investasi ({salaryAllocation.savingsPercent}%)
                 </span>
                 <span className="font-body-sm text-[10px] text-on-surface-variant">
-                  Otomatis masuk target aktif
+                  {activeGoalSavings > 0
+                    ? `Investasi ${formatRupiah(savingsSpent)} • Target ${formatRupiah(activeGoalSavings)}`
+                    : 'Investasi & Target Tabungan Aktif'}
                 </span>
               </div>
             </div>
             <div className="flex flex-col items-end">
               <span className="font-num-data text-primary text-xs font-bold tabular-nums">
-                {formatRupiah(savingsSpent)}
+                {formatRupiah(totalSavingsAllocation)}
               </span>
               <span className="font-body-sm text-[10px] text-primary/80 tabular-nums">
                 dari {formatRupiah(savingsCap)}
@@ -525,16 +705,13 @@ export const BudgetsPage: React.FC = () => {
                   className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10 font-num-data"
                 />
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-on-surface-variant font-medium">Deadline / Bulan Target</label>
-                <input
-                  type="text"
-                  placeholder={`Contoh: Des ${new Date().getFullYear()}`}
-                  value={targetDate}
-                  onChange={(e) => setTargetDate(e.target.value)}
-                  className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10"
-                />
-              </div>
+              <CustomDatePicker
+                value={targetDate}
+                onChange={setTargetDate}
+                label="Deadline Target"
+                placeholder="Pilih tanggal deadline (opsional)"
+                allowClear={true}
+              />
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
@@ -555,26 +732,125 @@ export const BudgetsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Modal Edit Target Impian */}
+      {isEditGoalModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-sm bg-surface-container-low rounded-3xl border border-white/10 p-5 shadow-2xl flex flex-col gap-3.5 animate-slideUp">
+            <div className="flex items-center justify-between pb-1 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-secondary/15 text-secondary flex items-center justify-center border border-secondary/20">
+                  <span className="material-symbols-outlined text-[18px]">edit</span>
+                </div>
+                <h4 className="font-headline-sm text-base font-bold text-on-surface">Edit Target Impian</h4>
+              </div>
+              <button onClick={() => setIsEditGoalModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleUpdateGoal} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-on-surface-variant font-medium">Nama Target Impian</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: DP Rumah, MacBook Pro"
+                  value={editGoalName}
+                  onChange={(e) => setEditGoalName(e.target.value)}
+                  className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-on-surface-variant font-medium">Target Nominal (Rp)</label>
+                <input
+                  type="number"
+                  required
+                  placeholder="Contoh: 50000000"
+                  value={editTargetAmount}
+                  onChange={(e) => setEditTargetAmount(e.target.value)}
+                  className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10 font-num-data"
+                />
+              </div>
+              <CustomDatePicker
+                value={editTargetDate}
+                onChange={setEditTargetDate}
+                label="Deadline Target"
+                placeholder="Pilih tanggal deadline (opsional)"
+                allowClear={true}
+              />
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditGoalModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-surface-container text-xs text-on-surface-variant font-bold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-secondary text-surface-container-lowest text-xs font-bold shadow-md shadow-secondary/25 hover:brightness-110 transition-all active:scale-95"
+                >
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Hapus Target */}
+      {goalToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-sm bg-surface-container-low rounded-3xl border border-white/10 p-5 shadow-2xl flex flex-col gap-3.5 animate-slideUp">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-error/15 text-error flex items-center justify-center shrink-0 border border-error/25">
+                <span className="material-symbols-outlined text-[22px]">delete_forever</span>
+              </div>
+              <div className="flex flex-col">
+                <h4 className="font-headline-sm text-base font-bold text-on-surface">Hapus Target Impian?</h4>
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  Apakah Anda yakin ingin menghapus <strong className="text-on-surface">"{goalToDelete.name}"</strong>? Tabungan yang sudah terkumpul di dompet Anda tetap aman.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setGoalToDelete(null)}
+                className="flex-1 py-2.5 rounded-xl bg-surface-container text-xs text-on-surface-variant font-bold hover:bg-surface-container-high transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteGoal}
+                className="flex-1 py-2.5 rounded-xl bg-error text-surface-container-lowest text-xs font-bold shadow-md shadow-error/25 hover:brightness-110 transition-all active:scale-95"
+              >
+                Ya, Hapus
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Deposit / Nabung */}
       {isDepositModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="w-full max-w-xs bg-surface-container-low rounded-3xl border border-white/10 p-5 shadow-2xl flex flex-col gap-3">
             <h4 className="font-headline-sm text-base font-bold text-on-surface">Tambah Tabungan</h4>
             <form onSubmit={handleDeposit} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-on-surface-variant font-medium">Pilih Sumber Dompet</label>
-                <select
-                  value={selectedWalletIdForDeposit}
-                  onChange={(e) => setSelectedWalletIdForDeposit(e.target.value)}
-                  className="bg-surface-container px-3 py-2 rounded-xl text-xs text-on-surface border border-white/10 outline-none focus:border-primary"
-                >
-                  {wallets.map((w) => (
-                    <option key={w.id} value={w.id} className="bg-surface-container-high text-on-surface">
-                      {w.name} ({formatRupiah(w.balance)})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <CustomDropdown
+                label="Pilih Sumber Dompet"
+                options={wallets.map((w) => ({
+                  value: w.id,
+                  label: w.name,
+                  sublabel: formatRupiah(w.balance),
+                  icon: w.icon || 'account_balance_wallet',
+                  iconColor: w.color || '#4EDE93',
+                }))}
+                value={selectedWalletIdForDeposit}
+                onChange={setSelectedWalletIdForDeposit}
+                variant="primary"
+              />
 
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-on-surface-variant font-medium">Nominal Setoran (Rp)</label>
@@ -586,6 +862,9 @@ export const BudgetsPage: React.FC = () => {
                   onChange={(e) => setDepositAmount(e.target.value)}
                   className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10 font-num-data"
                 />
+                <span className="text-[10px] text-on-surface-variant/70">
+                  Uang tetap aman di rekening Anda (belum dipotong sebagai belanja) sampai target selesai Anda beli.
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -599,7 +878,138 @@ export const BudgetsPage: React.FC = () => {
                   type="submit"
                   className="flex-1 py-2 rounded-xl bg-gradient-to-r from-primary to-secondary text-surface-container-lowest text-xs font-bold shadow-lg shadow-primary/20"
                 >
-                  Nabung Sekarang
+                  Tambah Tabungan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Realisasi & Beli Target Impian */}
+      {isCompleteModalOpen && goalToComplete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-sm bg-surface-container-low rounded-3xl border border-white/10 p-5 shadow-2xl flex flex-col gap-3.5 animate-slideUp">
+            <div className="flex items-center justify-between pb-1 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-primary/20 text-primary flex items-center justify-center border border-primary/30 shadow-[0_0_8px_rgba(78,222,163,0.3)]">
+                  <span className="material-symbols-outlined text-[18px]">shopping_cart_checkout</span>
+                </div>
+                <div>
+                  <h4 className="font-headline-sm text-base font-bold text-on-surface">Beli & Tuntaskan Target 🎉</h4>
+                  <p className="text-[10px] text-on-surface-variant">Catat pengeluaran nyata saat membeli barang ini</p>
+                </div>
+              </div>
+              <button onClick={() => setIsCompleteModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            {/* Target Info Box */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-surface-container border border-white/5">
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-label-caps text-on-surface-variant font-bold">Barang Target</span>
+                <span className="font-headline-sm text-sm font-bold text-on-surface">{goalToComplete.name}</span>
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] uppercase font-label-caps text-on-surface-variant font-bold">Target Nominal</span>
+                <span className="font-num-data text-xs font-bold text-primary">{formatRupiah(goalToComplete.targetAmount)}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleCompleteGoal} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-on-surface-variant font-medium">Harga Beli Aktual (Rp)</label>
+                <input
+                  type="number"
+                  required
+                  placeholder="Contoh: 1000000"
+                  value={actualPurchaseAmount}
+                  onChange={(e) => setActualPurchaseAmount(e.target.value)}
+                  className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10 font-num-data text-primary font-bold"
+                />
+                <span className="text-[10px] text-on-surface-variant/70">
+                  Saldo dompet akan dipotong sebesar nominal belanja nyata ini.
+                </span>
+              </div>
+
+              <CustomDropdown
+                label="Pilih Dompet Pembayaran"
+                options={wallets.map((w) => ({
+                  value: w.id,
+                  label: w.name,
+                  sublabel: `Saldo: ${formatRupiah(w.balance)}`,
+                  icon: w.icon || 'account_balance_wallet',
+                  iconColor: w.color || '#4EDE93',
+                }))}
+                value={selectedWalletForComplete}
+                onChange={setSelectedWalletForComplete}
+                variant="primary"
+              />
+
+              {/* Real-time Wallet Balance Alert */}
+              {(() => {
+                const selectedWallet = wallets.find((w) => w.id === selectedWalletForComplete);
+                const purchaseAmt = parseFloat(actualPurchaseAmount || '0');
+                if (selectedWallet && purchaseAmt > 0 && purchaseAmt > selectedWallet.balance) {
+                  return (
+                    <div className="p-2.5 rounded-xl bg-error/10 border border-error/20 flex items-start gap-2 text-error text-[11px]">
+                      <span className="material-symbols-outlined text-sm shrink-0 mt-0.5">warning</span>
+                      <span>
+                        Saldo dompet <strong>{selectedWallet.name}</strong> ({formatRupiah(selectedWallet.balance)}) kurang dari nominal pembayaran ({formatRupiah(purchaseAmt)}).
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <CustomDropdown
+                label="Kategori Pengeluaran"
+                options={categories
+                  .filter((c) => c.type === 'expense')
+                  .map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                    sublabel: c.allocationGroup ? `Grup: ${c.allocationGroup}` : undefined,
+                    icon: c.icon || 'category',
+                    iconColor: c.color || '#4EDE93',
+                  }))}
+                value={selectedCategoryForComplete}
+                onChange={setSelectedCategoryForComplete}
+                variant="secondary"
+              />
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-on-surface-variant font-medium">Catatan Pembelian (Opsional)</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Beli Sepatu Adidas di Mall"
+                  value={purchaseNotes}
+                  onChange={(e) => setPurchaseNotes(e.target.value)}
+                  className="bg-surface-container px-3.5 py-2.5 rounded-xl text-xs text-on-surface border border-white/10"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCompleteModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-surface-container text-xs text-on-surface-variant font-bold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={(() => {
+                    const selectedWallet = wallets.find((w) => w.id === selectedWalletForComplete);
+                    const purchaseAmt = parseFloat(actualPurchaseAmount || '0');
+                    return !purchaseAmt || purchaseAmt <= 0 || (!!selectedWallet && purchaseAmt > selectedWallet.balance);
+                  })()}
+                  className="flex-1 py-2.5 rounded-xl bg-primary text-surface-container-lowest text-xs font-bold shadow-md shadow-primary/25 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                  <span>Bayar & Selesaikan</span>
                 </button>
               </div>
             </form>

@@ -74,8 +74,10 @@ export const savingsGoalApi = {
   getById: (id: string) => apiClient.get(`/savings-goals/${id}`),
   create: (data: any) => apiClient.post('/savings-goals', data),
   update: (id: string, data: any) => apiClient.put(`/savings-goals/${id}`, data),
-  deposit: (id: string, data: { amount: number; wallet_id: string }) =>
+  deposit: (id: string, data: { amount: number; wallet_id?: string }) =>
     apiClient.post(`/savings-goals/${id}/deposit`, data),
+  complete: (id: string, data: { actual_amount: number; wallet_id: string; category_id?: string; notes?: string }) =>
+    apiClient.post(`/savings-goals/${id}/complete`, data),
   delete: (id: string) => apiClient.delete(`/savings-goals/${id}`),
 };
 

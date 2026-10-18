@@ -254,10 +254,11 @@ func (r *transactionRepository) GetCategorySpendings(userID uuid.UUID, month int
 	}
 
 	var results []Result
-	err := r.db.Model(&models.Transaction{}).
-		Select("category_id, COALESCE(SUM(amount), 0) as total").
-		Where("user_id = ? AND type = 'expense' AND category_id IS NOT NULL AND EXTRACT(MONTH FROM transaction_date) = ? AND EXTRACT(YEAR FROM transaction_date) = ?", userID, month, year).
-		Group("category_id").
+	err := r.db.Table("transactions").
+		Select("transactions.category_id, COALESCE(SUM(transactions.amount), 0) as total").
+		Joins("LEFT JOIN categories ON categories.id = transactions.category_id").
+		Where("transactions.user_id = ? AND (transactions.type = 'expense' OR (transactions.type = 'transfer' AND (categories.allocation_group = 'savings' OR LOWER(categories.name) LIKE '%tabungan%' OR LOWER(categories.name) LIKE '%investasi%'))) AND transactions.category_id IS NOT NULL AND EXTRACT(MONTH FROM transactions.transaction_date) = ? AND EXTRACT(YEAR FROM transactions.transaction_date) = ?", userID, month, year).
+		Group("transactions.category_id").
 		Scan(&results).Error
 
 	if err != nil {

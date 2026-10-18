@@ -218,12 +218,28 @@ export const DashboardPage: React.FC = () => {
     .filter((t) => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount, 0);
 
+  // Current Month Outflow & Inflow for Monthly Budget & Health indicators
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const isCurrentMonthTx = (t: any) => {
+    const d = new Date(t.transactionDate);
+    return !isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+  };
+
+  const currentMonthOutflow = transactions
+    .filter((t) => t.type === 'expense' && isCurrentMonthTx(t))
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const currentMonthInflow = transactions
+    .filter((t) => t.type === 'income' && isCurrentMonthTx(t))
+    .reduce((sum, t) => sum + t.amount, 0);
+
   // Batas Anggaran Bulanan otomatis mengikuti total alokasi pengeluaran (Kebutuhan + Keinginan) dari Gaji
   const allocatedSpendingBudget = Math.round(
     ((salaryAllocation?.monthlyIncome || 0) * ((salaryAllocation?.needsPercent || 50) + (salaryAllocation?.wantsPercent || 30))) / 100
   );
   const currentMonthlyBudget = allocatedSpendingBudget > 0 ? allocatedSpendingBudget : monthlyOverallBudget;
-  const budgetSpentPct = currentMonthlyBudget > 0 ? Math.min(100, Math.round((totalOutflow / currentMonthlyBudget) * 100)) : 0;
+  const budgetSpentPct = currentMonthlyBudget > 0 ? Math.min(100, Math.round((currentMonthOutflow / currentMonthlyBudget) * 100)) : 0;
   const recentTransactions = transactions.slice(0, 5);
 
   // Dynamic Financial Health Evaluation
@@ -239,8 +255,8 @@ export const DashboardPage: React.FC = () => {
       };
     }
 
-    // Overbudget or severe deficit
-    if ((currentMonthlyBudget > 0 && totalOutflow > currentMonthlyBudget) || (totalOutflow > totalInflow && totalInflow > 0)) {
+    // Overbudget or severe deficit in current month
+    if ((currentMonthlyBudget > 0 && currentMonthOutflow > currentMonthlyBudget) || (currentMonthOutflow > currentMonthInflow && currentMonthInflow > 0)) {
       return {
         title: 'Pengeluaran Melebihi Batas 🚨',
         colorClass: 'text-error',
@@ -601,9 +617,9 @@ export const DashboardPage: React.FC = () => {
           <div className="flex items-baseline justify-between text-xs">
             <span className="font-body-sm text-on-surface-variant">
               {currentMonthlyBudget > 0 ? (
-                <>Terpakai <strong className="text-on-surface font-semibold">{budgetSpentPct}%</strong> ({formatRupiah(totalOutflow)})</>
+                <>Terpakai <strong className="text-on-surface font-semibold">{budgetSpentPct}%</strong> ({formatRupiah(currentMonthOutflow)})</>
               ) : (
-                <>Pengeluaran: <strong className="text-on-surface font-semibold">{formatRupiah(totalOutflow)}</strong></>
+                <>Pengeluaran: <strong className="text-on-surface font-semibold">{formatRupiah(currentMonthOutflow)}</strong></>
               )}
             </span>
             <span className="font-body-sm text-on-surface-variant">
@@ -623,18 +639,18 @@ export const DashboardPage: React.FC = () => {
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-1 text-primary">
             {currentMonthlyBudget > 0 ? (
-              totalOutflow > currentMonthlyBudget ? (
+              currentMonthOutflow > currentMonthlyBudget ? (
                 <>
                   <span className="material-symbols-outlined text-[15px] text-error">warning</span>
                   <span className="font-body-sm text-[11px] text-error">
-                    Melebihi batas sebesar {formatRupiah(totalOutflow - currentMonthlyBudget)}
+                    Melebihi batas sebesar {formatRupiah(currentMonthOutflow - currentMonthlyBudget)}
                   </span>
                 </>
               ) : (
                 <>
                   <span className="material-symbols-outlined text-[15px]">check_circle</span>
                   <span className="font-body-sm text-[11px]">
-                    Sisa kuota: {formatRupiah(Math.max(0, Math.round((currentMonthlyBudget - totalOutflow) / remainingDaysInMonth)))}/hari
+                    Sisa kuota: {formatRupiah(Math.max(0, Math.round((currentMonthlyBudget - currentMonthOutflow) / remainingDaysInMonth)))}/hari
                   </span>
                 </>
               )

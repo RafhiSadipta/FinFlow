@@ -32,6 +32,7 @@ export const AnalyticsPage: React.FC = () => {
     categories,
     deletedCategories,
     budgets,
+    savingsGoals,
     salaryAllocation,
     setBudgetLimit,
     deleteCategory,
@@ -64,9 +65,23 @@ export const AnalyticsPage: React.FC = () => {
   const prevQuarterYear = currentQuarter === 1 ? currentYear - 1 : currentYear;
   const prevYear = currentYear - 1;
 
-  // Filter current & previous period transactions
+  // Helper to determine if transaction counts towards expense or savings allocation in analytics
+  const isAnalyzedTransaction = (t: any) => {
+    if (t.type === 'expense') return true;
+    if (t.type === 'transfer' && t.categoryId) {
+      const cat = categories.find((c) => c.id === t.categoryId);
+      return (
+        cat?.allocationGroup === 'savings' ||
+        cat?.name?.toLowerCase().includes('tabungan') ||
+        (cat?.type === 'expense' && cat?.name?.toLowerCase().includes('investasi'))
+      );
+    }
+    return false;
+  };
+
+  // Filter current & previous period transactions (expenses and savings transfers)
   const currentPeriodTxs = transactions.filter((t) => {
-    if (t.type !== 'expense') return false;
+    if (!isAnalyzedTransaction(t)) return false;
     const d = new Date(t.transactionDate);
     if (isNaN(d.getTime())) return false;
     if (activeSegment === 'month') {
@@ -80,7 +95,7 @@ export const AnalyticsPage: React.FC = () => {
   });
 
   const prevPeriodTxs = transactions.filter((t) => {
-    if (t.type !== 'expense') return false;
+    if (!isAnalyzedTransaction(t)) return false;
     const d = new Date(t.transactionDate);
     if (isNaN(d.getTime())) return false;
     if (activeSegment === 'month') {
@@ -460,6 +475,16 @@ export const AnalyticsPage: React.FC = () => {
     }
   };
 
+  // Dana komitmen tabungan target impian yang masih aktif berjalan
+  const activeGoalSavings = savingsGoals
+    .filter((g) => !g.isCompleted)
+    .reduce((sum, g) => sum + g.currentAmount, 0);
+
+  // Kategori tabungan / investasi utama
+  const primarySavingsCatId = activeCategories.find(
+    (c) => c.allocationGroup === 'savings' || c.name.toLowerCase().includes('tabungan')
+  )?.id;
+
   // Dynamically calculate category statistics with real recorded transactions for active period
   const categoryStats = activeCategories.map((cat) => {
     // Check if user set a custom budget for this category
@@ -472,7 +497,9 @@ export const AnalyticsPage: React.FC = () => {
       .filter((t) => t.categoryId === cat.id)
       .reduce((sum, t) => sum + t.amount, 0);
 
-    const calculatedSpent = userRealSpent;
+    const isPrimarySavings = cat.id === primarySavingsCatId;
+    const goalSavingsForCat = isPrimarySavings ? activeGoalSavings : 0;
+    const calculatedSpent = userRealSpent + goalSavingsForCat;
     const calculatedLimit = Math.round(baseMonthlyLimit * config.multiplier);
     const percentage = calculatedLimit > 0 ? Math.min(100, Math.round((calculatedSpent / calculatedLimit) * 100)) : 0;
 
@@ -491,10 +518,13 @@ export const AnalyticsPage: React.FC = () => {
 
     return {
       ...cat,
-      subtext: getSubtext(cat),
+      subtext: isPrimarySavings && activeGoalSavings > 0
+        ? `${getSubtext(cat)} • Target: ${formatRupiah(activeGoalSavings)}`
+        : getSubtext(cat),
       baseMonthlyLimit,
       isCustom,
       spent: calculatedSpent,
+      goalSavings: goalSavingsForCat,
       limit: calculatedLimit,
       percentage,
       status,

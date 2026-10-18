@@ -45,6 +45,13 @@ type UpdateSavingsGoalRequest struct {
 }
 
 type DepositSavingsGoalRequest struct {
-	Amount   float64   `json:"amount" binding:"required,gt=0"`
-	WalletID uuid.UUID `json:"wallet_id" binding:"required"` // Wallet to deduct from
+	Amount   float64    `json:"amount" binding:"required,gt=0"`
+	WalletID *uuid.UUID `json:"wallet_id"` // Optional: for reference
+}
+
+type CompleteSavingsGoalRequest struct {
+	ActualAmount float64    `json:"actual_amount" binding:"required,gt=0"`
+	WalletID     uuid.UUID  `json:"wallet_id" binding:"required"`
+	CategoryID   *uuid.UUID `json:"category_id"`
+	Notes        string     `json:"notes"`
 }

@@ -85,13 +85,18 @@ export function mapBudgetFromBackend(data: any): Budget {
 }
 
 export function mapSavingsGoalFromBackend(data: any): SavingsGoal {
+  let cleanTargetDate = data.target_date;
+  if (cleanTargetDate && typeof cleanTargetDate === 'string') {
+    cleanTargetDate = cleanTargetDate.split('T')[0].split(' ')[0].trim();
+  }
+
   return {
     id: data.id,
     userId: data.user_id,
     name: data.name,
     targetAmount: Number(data.target_amount) || 0,
     currentAmount: Number(data.current_amount) || 0,
-    targetDate: data.target_date || undefined,
+    targetDate: cleanTargetDate || undefined,
     icon: data.icon || 'savings',
     color: data.color || '#4EDE93',
     isCompleted: !!data.is_completed,

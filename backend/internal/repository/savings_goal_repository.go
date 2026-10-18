@@ -2,6 +2,8 @@ package repository
 
 import (
 	"errors"
+	"time"
+
 	"finflow-backend/internal/models"
 
 	"github.com/google/uuid"
@@ -14,7 +16,8 @@ type SavingsGoalRepository interface {
 	GetByUserID(userID uuid.UUID) ([]models.SavingsGoal, error)
 	Update(goal *models.SavingsGoal) error
 	Delete(id uuid.UUID, userID uuid.UUID) error
-	Deposit(userID uuid.UUID, goalID uuid.UUID, walletID uuid.UUID, amount float64) (*models.SavingsGoal, error)
+	Deposit(userID uuid.UUID, goalID uuid.UUID, amount float64) (*models.SavingsGoal, error)
+	CompleteGoal(userID uuid.UUID, goalID uuid.UUID, walletID uuid.UUID, categoryID *uuid.UUID, actualAmount float64, notes string) (*models.SavingsGoal, error)
 }
 
 type savingsGoalRepository struct {
@@ -52,46 +55,81 @@ func (r *savingsGoalRepository) Delete(id uuid.UUID, userID uuid.UUID) error {
 	return r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.SavingsGoal{}).Error
 }
 
-func (r *savingsGoalRepository) Deposit(userID uuid.UUID, goalID uuid.UUID, walletID uuid.UUID, amount float64) (*models.SavingsGoal, error) {
+// Deposit: Menabung / menambah progres target tanpa memotong saldo dompet atau mencatat expense semu.
+// Duit masih ada di rekening pengguna, hanya di-alokasikan untuk target impian.
+func (r *savingsGoalRepository) Deposit(userID uuid.UUID, goalID uuid.UUID, amount float64) (*models.SavingsGoal, error) {
+	var goal models.SavingsGoal
+	if err := r.db.Where("id = ? AND user_id = ?", goalID, userID).First(&goal).Error; err != nil {
+		return nil, err
+	}
+
+	goal.CurrentAmount += amount
+
+	if err := r.db.Save(&goal).Error; err != nil {
+		return nil, err
+	}
+	return &goal, nil
+}
+
+// CompleteGoal: Realisasi Pembelian Target Impian
+// Memotong saldo dompet sesuai harga aktual, mencatat transaksi expense belanja nyata, dan menandai target selesai.
+func (r *savingsGoalRepository) CompleteGoal(userID uuid.UUID, goalID uuid.UUID, walletID uuid.UUID, categoryID *uuid.UUID, actualAmount float64, notes string) (*models.SavingsGoal, error) {
 	var goal models.SavingsGoal
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Check wallet balance
+		// 1. Find goal
+		if err := tx.Where("id = ? AND user_id = ?", goalID, userID).First(&goal).Error; err != nil {
+			return errors.New("target impian tidak ditemukan")
+		}
+
+		// 2. Check wallet balance
 		var wallet models.Wallet
 		if err := tx.Where("id = ? AND user_id = ?", walletID, userID).First(&wallet).Error; err != nil {
-			return errors.New("wallet not found")
+			return errors.New("dompet pembayaran tidak ditemukan")
 		}
 
-		if wallet.Balance < amount {
-			return errors.New("insufficient wallet balance")
+		if wallet.Balance < actualAmount {
+			return errors.New("saldo dompet tidak mencukupi untuk pembelian ini")
 		}
 
-		// 2. Deduct wallet balance
+		// 3. Potong saldo dompet pembayaran
 		if err := tx.Model(&models.Wallet{}).Where("id = ?", walletID).
-			UpdateColumn("balance", gorm.Expr("balance - ?", amount)).Error; err != nil {
+			UpdateColumn("balance", gorm.Expr("balance - ?", actualAmount)).Error; err != nil {
 			return err
 		}
 
-		// 3. Find goal and update amount
-		if err := tx.Where("id = ? AND user_id = ?", goalID, userID).First(&goal).Error; err != nil {
-			return err
+		// 4. Update status goal menjadi selesai
+		goal.IsCompleted = true
+		if goal.CurrentAmount < actualAmount {
+			goal.CurrentAmount = actualAmount
 		}
-
-		goal.CurrentAmount += amount
-		if goal.CurrentAmount >= goal.TargetAmount {
-			goal.IsCompleted = true
-		}
-
 		if err := tx.Save(&goal).Error; err != nil {
 			return err
 		}
 
-		// 4. Record as an expense/savings transaction
+		// 5. Category resolution (default to 'wants' or 'expense')
+		catID := categoryID
+		if catID == nil {
+			var cat models.Category
+			if err := tx.Where("(user_id = ? OR user_id IS NULL) AND type = 'expense' AND (allocation_group = 'wants' OR LOWER(name) LIKE '%belanja%')", userID).
+				Order("user_id DESC NULLS LAST").First(&cat).Error; err == nil {
+				catID = &cat.ID
+			}
+		}
+
+		txNotes := notes
+		if txNotes == "" {
+			txNotes = "Pembelian Target Impian: " + goal.Name
+		}
+
+		// 6. Catat transaksi pengeluaran (expense) belanja nyata
 		trans := &models.Transaction{
-			UserID:   userID,
-			WalletID: walletID,
-			Type:     "expense",
-			Amount:   amount,
-			Notes:    "Setoran Tabungan: " + goal.Name,
+			UserID:          userID,
+			WalletID:        walletID,
+			CategoryID:      catID,
+			Type:            "expense",
+			Amount:          actualAmount,
+			TransactionDate: time.Now().UTC(),
+			Notes:           txNotes,
 		}
 		if err := tx.Create(trans).Error; err != nil {
 			return err

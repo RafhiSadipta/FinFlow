@@ -126,6 +126,34 @@ func (h *SavingsGoalHandler) Deposit(c *fiber.Ctx) error {
 	return utils.SuccessResponse(c, fiber.StatusOK, "Deposit successful! Savings goal updated", goal)
 }
 
+func (h *SavingsGoalHandler) Complete(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return utils.FailResponse(c, fiber.StatusUnauthorized, "Unauthorized")
+	}
+
+	goalID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return utils.FailResponse(c, fiber.StatusBadRequest, "Invalid goal ID format")
+	}
+
+	var req models.CompleteSavingsGoalRequest
+	if err := c.BodyParser(&req); err != nil {
+		return utils.FailResponse(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+	}
+
+	if req.ActualAmount <= 0 {
+		return utils.FailResponse(c, fiber.StatusBadRequest, "Actual purchase amount must be greater than 0")
+	}
+
+	goal, err := h.goalService.CompleteGoal(userID, goalID, &req)
+	if err != nil {
+		return utils.FailResponse(c, fiber.StatusBadRequest, err.Error(), nil)
+	}
+
+	return utils.SuccessResponse(c, fiber.StatusOK, "Selamat! Target impian berhasil dibeli dan diselesaikan 🎉", goal)
+}
+
 func (h *SavingsGoalHandler) Delete(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {

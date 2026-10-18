@@ -218,7 +218,7 @@ func (s *analyticsService) GetAnalyticsOverview(userID uuid.UUID, month int, yea
 	err = db.Table("transactions").
 		Select("transactions.category_id, COALESCE(categories.name, 'Tanpa Kategori') as category_name, COALESCE(categories.color, '#64748B') as color, COALESCE(categories.icon, 'more_horiz') as icon, categories.allocation_group, COALESCE(SUM(transactions.amount), 0) as total").
 		Joins("LEFT JOIN categories ON categories.id = transactions.category_id").
-		Where("transactions.user_id = ? AND transactions.type = 'expense' AND transactions.deleted_at IS NULL AND EXTRACT(MONTH FROM transactions.transaction_date) = ? AND EXTRACT(YEAR FROM transactions.transaction_date) = ?", userID, month, year).
+		Where("transactions.user_id = ? AND (transactions.type = 'expense' OR (transactions.type = 'transfer' AND (categories.allocation_group = 'savings' OR LOWER(categories.name) LIKE '%tabungan%' OR LOWER(categories.name) LIKE '%investasi%'))) AND transactions.deleted_at IS NULL AND EXTRACT(MONTH FROM transactions.transaction_date) = ? AND EXTRACT(YEAR FROM transactions.transaction_date) = ?", userID, month, year).
 		Group("transactions.category_id, categories.name, categories.color, categories.icon, categories.allocation_group").
 		Order("total DESC").
 		Scan(&catTotals).Error
