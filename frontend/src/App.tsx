@@ -1,4 +1,7 @@
 import React, { useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { App as CapApp } from '@capacitor/app';
 import { useFinFlowStore } from './store/useFinFlowStore';
 import { Navbar } from './components/Navbar';
 import { BottomNav } from './components/BottomNav';
@@ -20,6 +23,37 @@ export const App: React.FC = () => {
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
+
+  // Native Mobile Optimizations (Status Bar & Android Hardware Back Button)
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+      StatusBar.setBackgroundColor({ color: '#0F131D' }).catch(() => {});
+
+      const backListener = CapApp.addListener('backButton', () => {
+        const state = useFinFlowStore.getState();
+        if (state.isRecordModalOpen) {
+          state.setRecordModalOpen(false);
+        } else if (state.isWalletModalOpen) {
+          state.setWalletModalOpen(false);
+        } else if (state.isCategoryModalOpen) {
+          state.setCategoryModalOpen(false);
+        } else if (state.isDateFilterModalOpen) {
+          state.setDateFilterModalOpen(false);
+        } else if (state.isAuthModalOpen) {
+          state.setAuthModalOpen(false);
+        } else if (state.activeTab !== 'dashboard') {
+          state.setActiveTab('dashboard');
+        } else {
+          CapApp.exitApp();
+        }
+      });
+
+      return () => {
+        backListener.then((h) => h.remove()).catch(() => {});
+      };
+    }
+  }, []);
 
   // If user is not authenticated, render the Obsidian Landing / Welcome Page
   if (!isAuthenticated) {

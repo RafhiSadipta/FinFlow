@@ -1,7 +1,23 @@
 import axios from 'axios';
+import { Capacitor } from '@capacitor/core';
 import { getSavedToken } from '../utils/cookies';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1';
+// Smart base URL for web browser vs native mobile emulator / physical device
+const getBaseUrl = () => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('finflow_api_url');
+    if (custom) return custom;
+  }
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    return 'http://10.0.2.2:8080/api/v1';
+  }
+  return 'http://localhost:8080/api/v1';
+};
+
+const API_BASE_URL = getBaseUrl();
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
