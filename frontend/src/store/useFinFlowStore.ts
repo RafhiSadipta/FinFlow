@@ -19,6 +19,49 @@ import {
 import { getSavedToken, saveToken, clearSavedToken } from '../utils/cookies';
 import { formatRupiah } from '../utils/formatters';
 
+const SALARY_ALLOCATION_STORAGE_KEY = 'finflow_salary_allocation';
+
+const getStoredSalaryAllocation = (): SalaryAllocationRule => {
+  try {
+    const raw = localStorage.getItem(SALARY_ALLOCATION_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.monthlyIncome === 'number') {
+        return {
+          monthlyIncome: Number(parsed.monthlyIncome) || 0,
+          needsPercent: Number(parsed.needsPercent) || 50,
+          wantsPercent: Number(parsed.wantsPercent) || 30,
+          savingsPercent: Number(parsed.savingsPercent) || 20,
+        };
+      }
+    }
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+  return {
+    monthlyIncome: 0,
+    needsPercent: 50,
+    wantsPercent: 30,
+    savingsPercent: 20,
+  };
+};
+
+const saveStoredSalaryAllocation = (rule: SalaryAllocationRule) => {
+  try {
+    localStorage.setItem(SALARY_ALLOCATION_STORAGE_KEY, JSON.stringify(rule));
+  } catch {
+    // Ignore storage quota
+  }
+};
+
+const clearStoredSalaryAllocation = () => {
+  try {
+    localStorage.removeItem(SALARY_ALLOCATION_STORAGE_KEY);
+  } catch {
+    // Ignore
+  }
+};
+
 export interface SalaryAllocationRule {
   monthlyIncome: number;
   needsPercent: number;    // default 50
@@ -154,12 +197,7 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
   budgets: [],
   savingsGoals: [],
   monthlyOverallBudget: 0,
-  salaryAllocation: {
-    monthlyIncome: 0,
-    needsPercent: 50,
-    wantsPercent: 30,
-    savingsPercent: 20,
-  },
+  salaryAllocation: getStoredSalaryAllocation(),
   
   historyFilter: {
     startDate: null,
@@ -213,8 +251,27 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
       const mapped = mapUserFromBackend(profileRes.value.data.data);
       const user = mapped.user;
-      const monthlyOverallBudget = mapped.monthlyOverallBudget;
-      const salaryAllocation = mapped.salaryAllocation;
+      let monthlyOverallBudget = mapped.monthlyOverallBudget;
+      let salaryAllocation = mapped.salaryAllocation;
+
+      // Persistence safeguard:
+      if (salaryAllocation.monthlyIncome > 0) {
+        saveStoredSalaryAllocation(salaryAllocation);
+      } else {
+        const localCached = getStoredSalaryAllocation();
+        if (localCached.monthlyIncome > 0) {
+          salaryAllocation = localCached;
+          monthlyOverallBudget = Math.round((localCached.monthlyIncome * (localCached.needsPercent + localCached.wantsPercent)) / 100);
+          // Sync back to server in background
+          authApi.updateProfile({
+            monthly_income_target: localCached.monthlyIncome,
+            needs_percentage: localCached.needsPercent,
+            wants_percentage: localCached.wantsPercent,
+            savings_percentage: localCached.savingsPercent,
+            monthly_budget: monthlyOverallBudget,
+          }).catch(() => {});
+        }
+      }
 
       let wallets: Wallet[] = [];
       if (walletsRes.status === 'fulfilled' && walletsRes.value.data?.data?.wallets) {
@@ -280,10 +337,13 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
         const bUser = res.data.data.user;
         saveToken(token);
         const mapped = mapUserFromBackend(bUser);
+        if (mapped.salaryAllocation.monthlyIncome > 0) {
+          saveStoredSalaryAllocation(mapped.salaryAllocation);
+        }
         set({
           user: mapped.user,
           monthlyOverallBudget: mapped.monthlyOverallBudget,
-          salaryAllocation: mapped.salaryAllocation,
+          salaryAllocation: mapped.salaryAllocation.monthlyIncome > 0 ? mapped.salaryAllocation : getStoredSalaryAllocation(),
           token,
           isAuthenticated: true,
           isAuthModalOpen: false,
@@ -311,10 +371,13 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
         const bUser = res.data.data.user;
         saveToken(token);
         const mapped = mapUserFromBackend(bUser);
+        if (mapped.salaryAllocation.monthlyIncome > 0) {
+          saveStoredSalaryAllocation(mapped.salaryAllocation);
+        }
         set({
           user: mapped.user,
           monthlyOverallBudget: mapped.monthlyOverallBudget,
-          salaryAllocation: mapped.salaryAllocation,
+          salaryAllocation: mapped.salaryAllocation.monthlyIncome > 0 ? mapped.salaryAllocation : getStoredSalaryAllocation(),
           token,
           isAuthenticated: true,
           isAuthModalOpen: false,
@@ -370,10 +433,17 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
   logout: () => {
     clearSavedToken();
+    clearStoredSalaryAllocation();
     set({
       user: null,
       token: null,
       isAuthenticated: false,
+      salaryAllocation: {
+        monthlyIncome: 0,
+        needsPercent: 50,
+        wantsPercent: 30,
+        savingsPercent: 20,
+      },
       wallets: [],
       categories: [],
       deletedCategories: [],
@@ -924,9 +994,15 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
 
   setSalaryAllocation: async (rule) => {
     const current = get().salaryAllocation;
-    const updated = { ...current, ...rule };
+    const updated: SalaryAllocationRule = {
+      monthlyIncome: rule.monthlyIncome !== undefined ? rule.monthlyIncome : current.monthlyIncome,
+      needsPercent: rule.needsPercent !== undefined ? rule.needsPercent : current.needsPercent,
+      wantsPercent: rule.wantsPercent !== undefined ? rule.wantsPercent : current.wantsPercent,
+      savingsPercent: rule.savingsPercent !== undefined ? rule.savingsPercent : current.savingsPercent,
+    };
     const autoBudget = Math.round((updated.monthlyIncome * (updated.needsPercent + updated.wantsPercent)) / 100);
     set({ salaryAllocation: updated, monthlyOverallBudget: autoBudget });
+    saveStoredSalaryAllocation(updated);
 
     try {
       await authApi.updateProfile({
@@ -941,8 +1017,13 @@ export const useFinFlowStore = create<FinFlowState>((set, get) => ({
         title: 'Alokasi Anggaran Disimpan',
         message: `Batas anggaran bulanan otomatis disesuaikan menjadi ${autoBudget > 0 ? formatRupiah(autoBudget) : 'Rp 0'}.`,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to sync salary allocation to backend:', err);
+      get().showToast({
+        type: 'error',
+        title: 'Gagal Menyinkronkan ke Server',
+        message: err.response?.data?.message || 'Data telah disimpan di memori lokal perangkat Anda.',
+      });
     }
   },
 }));

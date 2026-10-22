@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useFinFlowStore } from '../store/useFinFlowStore';
 import { formatRupiah } from '../utils/formatters';
 import confetti from 'canvas-confetti';
@@ -79,10 +79,21 @@ export const BudgetsPage: React.FC = () => {
   const [purchaseNotes, setPurchaseNotes] = useState('');
 
   // Calculator form states
-  const [calcIncome, setCalcIncome] = useState(salaryAllocation.monthlyIncome.toString());
+  const [calcIncome, setCalcIncome] = useState(salaryAllocation.monthlyIncome > 0 ? salaryAllocation.monthlyIncome.toString() : '');
   const [calcNeedsPct, setCalcNeedsPct] = useState(salaryAllocation.needsPercent.toString());
   const [calcWantsPct, setCalcWantsPct] = useState(salaryAllocation.wantsPercent.toString());
   const [calcSavingsPct, setCalcSavingsPct] = useState(salaryAllocation.savingsPercent.toString());
+  const [isSavingCalculator, setIsSavingCalculator] = useState(false);
+
+  // Synchronize calculator inputs whenever modal opens or salary allocation changes in store
+  useEffect(() => {
+    if (isCalculatorModalOpen) {
+      setCalcIncome(salaryAllocation.monthlyIncome > 0 ? salaryAllocation.monthlyIncome.toString() : '');
+      setCalcNeedsPct((salaryAllocation.needsPercent || 50).toString());
+      setCalcWantsPct((salaryAllocation.wantsPercent || 30).toString());
+      setCalcSavingsPct((salaryAllocation.savingsPercent || 20).toString());
+    }
+  }, [salaryAllocation, isCalculatorModalOpen]);
 
   // Aggregate savings
   const totalSaved = savingsGoals.reduce((sum, g) => sum + g.currentAmount, 0);
@@ -272,25 +283,25 @@ export const BudgetsPage: React.FC = () => {
     setIsDepositModalOpen(false);
   };
 
-  const handleSaveCalculator = (e: React.FormEvent) => {
+  const handleSaveCalculator = async (e: React.FormEvent) => {
     e.preventDefault();
     const newIncome = parseFloat(calcIncome) || 0;
     const newNeedsPct = parseFloat(calcNeedsPct) || 50;
     const newWantsPct = parseFloat(calcWantsPct) || 30;
     const newSavingsPct = parseFloat(calcSavingsPct) || 20;
 
-    setSalaryAllocation({
-      monthlyIncome: newIncome,
-      needsPercent: newNeedsPct,
-      wantsPercent: newWantsPct,
-      savingsPercent: newSavingsPct,
-    });
-
-    // Automatically align overall monthly budget limit = Needs + Wants
-    const calculatedBudget = Math.round((newIncome * (newNeedsPct + newWantsPct)) / 100);
-    setMonthlyOverallBudget(calculatedBudget);
-
-    setIsCalculatorModalOpen(false);
+    setIsSavingCalculator(true);
+    try {
+      await setSalaryAllocation({
+        monthlyIncome: newIncome,
+        needsPercent: newNeedsPct,
+        wantsPercent: newWantsPct,
+        savingsPercent: newSavingsPct,
+      });
+      setIsCalculatorModalOpen(false);
+    } finally {
+      setIsSavingCalculator(false);
+    }
   };
 
   return (
@@ -1037,9 +1048,11 @@ export const BudgetsPage: React.FC = () => {
                 <input
                   type="number"
                   required
+                  placeholder="Contoh: 10000000"
+                  disabled={isSavingCalculator}
                   value={calcIncome}
                   onChange={(e) => setCalcIncome(e.target.value)}
-                  className="bg-surface-container px-3.5 py-2 rounded-xl text-xs text-on-surface border border-white/10 font-num-data"
+                  className="bg-surface-container px-3.5 py-2 rounded-xl text-xs text-on-surface border border-white/10 font-num-data disabled:opacity-50"
                 />
               </div>
 
@@ -1114,16 +1127,25 @@ export const BudgetsPage: React.FC = () => {
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
+                  disabled={isSavingCalculator}
                   onClick={() => setIsCalculatorModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-surface-container text-xs text-on-surface-variant font-bold"
+                  className="flex-1 py-2.5 rounded-xl bg-surface-container text-xs text-on-surface-variant font-bold disabled:opacity-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-secondary text-on-secondary text-xs font-bold shadow-md shadow-secondary/25"
+                  disabled={isSavingCalculator}
+                  className="flex-1 py-2.5 rounded-xl bg-secondary text-on-secondary text-xs font-bold shadow-md shadow-secondary/25 disabled:opacity-50 flex items-center justify-center gap-1.5"
                 >
-                  Simpan & Hitung
+                  {isSavingCalculator ? (
+                    <>
+                      <span className="inline-block w-3.5 h-3.5 border-2 border-on-secondary border-t-transparent rounded-full animate-spin"></span>
+                      <span>Menyimpan...</span>
+                    </>
+                  ) : (
+                    <span>Simpan & Hitung</span>
+                  )}
                 </button>
               </div>
             </form>

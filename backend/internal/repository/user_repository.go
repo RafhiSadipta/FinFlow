@@ -12,6 +12,7 @@ type UserRepository interface {
 	GetByID(id uuid.UUID) (*models.User, error)
 	GetByEmail(email string) (*models.User, error)
 	Update(user *models.User) error
+	UpdateFields(id uuid.UUID, fields map[string]interface{}) error
 	Delete(id uuid.UUID) error
 }
 
@@ -47,6 +48,10 @@ func (r *userRepository) GetByEmail(email string) (*models.User, error) {
 
 func (r *userRepository) Update(user *models.User) error {
 	return r.db.Save(user).Error
+}
+
+func (r *userRepository) UpdateFields(id uuid.UUID, fields map[string]interface{}) error {
+	return r.db.Model(&models.User{}).Where("id = ?", id).Updates(fields).Error
 }
 
 func (r *userRepository) Delete(id uuid.UUID) error {

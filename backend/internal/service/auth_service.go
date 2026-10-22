@@ -169,39 +169,38 @@ func (s *authService) GetProfile(userID uuid.UUID) (*models.User, error) {
 }
 
 func (s *authService) UpdateProfile(userID uuid.UUID, req *models.UpdateProfileRequest) (*models.User, error) {
-	user, err := s.userRepo.GetByID(userID)
-	if err != nil {
-		return nil, err
-	}
+	updates := make(map[string]interface{})
 
 	if req.FullName != nil {
-		user.FullName = *req.FullName
+		updates["full_name"] = *req.FullName
 	}
 	if req.AvatarURL != nil {
-		user.AvatarURL = req.AvatarURL
+		updates["avatar_url"] = req.AvatarURL
 	}
 	if req.Currency != nil {
-		user.Currency = *req.Currency
+		updates["currency"] = *req.Currency
 	}
 	if req.MonthlyBudget != nil {
-		user.MonthlyBudget = *req.MonthlyBudget
+		updates["monthly_budget"] = *req.MonthlyBudget
 	}
 	if req.MonthlyIncomeTarget != nil {
-		user.MonthlyIncomeTarget = *req.MonthlyIncomeTarget
+		updates["monthly_income_target"] = *req.MonthlyIncomeTarget
 	}
 	if req.NeedsPercentage != nil {
-		user.NeedsPercentage = *req.NeedsPercentage
+		updates["needs_percentage"] = *req.NeedsPercentage
 	}
 	if req.WantsPercentage != nil {
-		user.WantsPercentage = *req.WantsPercentage
+		updates["wants_percentage"] = *req.WantsPercentage
 	}
 	if req.SavingsPercentage != nil {
-		user.SavingsPercentage = *req.SavingsPercentage
+		updates["savings_percentage"] = *req.SavingsPercentage
 	}
 
-	if err := s.userRepo.Update(user); err != nil {
-		return nil, err
+	if len(updates) > 0 {
+		if err := s.userRepo.UpdateFields(userID, updates); err != nil {
+			return nil, err
+		}
 	}
 
-	return user, nil
+	return s.userRepo.GetByID(userID)
 }
