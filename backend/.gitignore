@@ -5,5 +5,7 @@
 *.dylib
 *.test
 *.out
+finflow-linux
+finflow-api
 .env
 vendor/
