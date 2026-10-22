@@ -86,7 +86,7 @@ export const App: React.FC = () => {
       <Navbar />
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full pt-20">
+      <main className="flex-1 w-full pt-[calc(env(safe-area-inset-top,0px)+4.75rem)] pb-28">
         {renderActivePage()}
       </main>
 

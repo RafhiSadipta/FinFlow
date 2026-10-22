@@ -5,9 +5,9 @@ export const BottomNav: React.FC = () => {
   const { activeTab, setActiveTab, setRecordModalOpen } = useFinFlowStore();
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 pb-safe pointer-events-none">
-      <div className="max-w-md mx-auto px-4 pb-3">
-        <nav className="pointer-events-auto flex items-center justify-around h-16 rounded-2xl bg-surface-container-low/90 backdrop-blur-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)] px-2">
+    <div className="fixed bottom-0 left-0 right-0 z-40 pointer-events-none pb-[max(env(safe-area-inset-bottom,0px),0.25rem)]">
+      <div className="max-w-md mx-auto px-4 pb-1">
+        <nav className="pointer-events-auto flex items-center justify-around h-15 rounded-2xl bg-surface-container-low/90 backdrop-blur-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.6)] px-2">
           {/* 1. Beranda */}
           <button
             onClick={() => setActiveTab('dashboard')}

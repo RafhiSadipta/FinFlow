@@ -128,7 +128,7 @@ export const WalletManagementModal: React.FC = () => {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md animate-fadeIn">
       <div
-        className="w-full max-w-md bg-surface-container-low rounded-t-3xl sm:rounded-3xl border border-white/10 p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-md bg-surface-container-low rounded-t-3xl sm:rounded-3xl border border-white/10 p-5 pb-[max(env(safe-area-inset-bottom,0px),1.5rem)] shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
