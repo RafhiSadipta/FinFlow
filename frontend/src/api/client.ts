@@ -11,10 +11,7 @@ const getBaseUrl = () => {
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL;
   }
-  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-    return 'http://10.0.2.2:8080/api/v1';
-  }
-  return 'http://localhost:8080/api/v1';
+  return 'http://103.67.244.191/api/v1';
 };
 
 const API_BASE_URL = getBaseUrl();
