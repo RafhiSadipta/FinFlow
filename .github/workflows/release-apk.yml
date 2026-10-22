@@ -11,9 +11,9 @@ on:
         required: false
         default: 'v1.0.0'
       api_base_url:
-        description: 'URL API Backend Render (contoh: https://finflow-api.onrender.com/api/v1)'
+        description: 'URL API Backend VPS (contoh: http://103.67.244.191/api/v1)'
         required: false
-        default: ''
+        default: 'http://103.67.244.191/api/v1'
 
 permissions:
   contents: write
@@ -36,7 +36,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
